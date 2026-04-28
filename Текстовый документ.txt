@@ -1,0 +1,175 @@
+  Прошёлся по всем сервисам, фронту, docker-compose и .env. Ниже — отчёт от самого критичного к менее срочному.
+
+  ---
+  1. Критические проблемы безопасности
+
+  1.1. Секреты в репозитории и в JS-бандле
+
+  - backend/.env: JWT_SECRET=supersecretcoursetokenaaaaaaaaaaaaaaaaa, ADMIN_SECRET=...,
+  RABBITMQ_USER/PASSWORD=guest/guest — лежат в репо.
+  - frontend/.env: VITE_ADMIN_SECRET=.... Vite встраивает все VITE_* в бандл — админский секрет видит любой пользователь
+   сайта через DevTools и может вызывать любой AdminController.
+  - backend/docker-compose.yml: креды MinIO зашиты в compose; порты 5001-5006, 5432, 6379, 5672, 27017, 9000, 9001
+  выставлены наружу — БД и брокеры доступны без firewall.
+
+  1.2. Внутренние эндпоинты публично доступны
+
+  Поскольку порты сервисов проброшены наружу, мимо Gateway можно ходить напрямую:
+  - UserService/Controllers/InternalController.cs — весь [AllowAnonymous]. GET /api/internal/users?companyId=X отдаёт
+  всех сотрудников любой компании анониму.
+  - NotificationService/Controllers/InternalController.cs — DeleteChatNotifications без авторизации.
+  - StorageService/Controllers/FilesController.cs:132 — GetFile [AllowAnonymous]. Поле IsPrivate пишется, но никогда не
+  проверяется — все файлы (личные сообщения, документы) доступны по прямой ссылке.
+
+  1.3. CompanyService без авторизации
+
+  - CompanyService/Program.cs — нет AddAuthentication()/UseAuthentication().
+  - CompaniesController — нет [Authorize]. Мульти-тенант сломан в основании: любой может создавать/удалять любую
+  компанию.
+
+  1.4. CompanyIsolationMiddleware — мёртвый код
+
+  - Gateway/Program.cs:112 — middleware закомментирован.
+  - shared/Common/CompanyIsolationMiddleware.cs пишет в HttpContext.Items["CompanyId"], но ни один сервис это не читает.
+   Сервисы доверяют claim из JWT, но проверки companyId запроса против JWT нет — пользователь компании A может слать
+  запросы с ?companyId=B.
+
+  1.5. Аутентификация
+
+  - AuthController.Login — без rate-limit/lockout, брутфорс не ограничен.
+  - Cookie Secure определяется по Request.IsHttps; за reverse-proxy без UseForwardedHeaders будет false.
+  - Нет refresh-токенов, отозвать JWT нельзя.
+  - UsersController.CreateUser — [AllowAnonymous], проверка по X-Admin-Secret через == (timing attack).
+  - GenerateRandomPassword — new Random() вместо RandomNumberGenerator. Пароли предсказуемы.
+  - ImportMembers возвращает plaintext-пароли в JSON → они попадают в логи Gateway и Console.WriteLine.
+
+  1.6. Gateway и CORS
+
+  - Gateway/Program.cs:29 — CORS прибит к localhost:5173/5175/3000 с AllowCredentials. Прод-домен сразу сломает auth.
+  - Gateway/Services/RoutingService.cs:64-72 — копируются все заголовки клиента, включая X-Admin-Secret, Cookie,
+  X-Forwarded-*. Клиент может отправить X-Admin-Secret в обычный запрос — Gateway пробросит.
+  - RoutingService.cs:109-135 — non-multipart тело буферизуется в строку через StringContent. Ломает streaming,
+  перекодирует бинарные данные в UTF-8.
+
+  1.7. Пароли в Redis и миграции
+
+  - UserService/Services/UserService.cs — кэш user_{companyId}_{id} хранит User целиком, включая PasswordHash. Дамп
+  Redis = дамп всех bcrypt-хэшей.
+  - UserService/Program.cs — на каждом старте DROP TABLE IF EXISTS "__EFMigrationsHistory" CASCADE + ALTER TABLE ... ADD
+   COLUMN IF NOT EXISTS. Деструктивно, не идемпотентно при нескольких репликах. Видно по FIX_COMPANY_DB.md/QUICK_FIX.md,
+   что с миграциями автор уже мучился — костыль остался.
+
+  ---
+  2. Логические ошибки
+
+  1. Счётчики уведомлений теряются. NotificationService делает read-modify-write по UnreadMessage/UnreadFeed без
+  транзакции и без ON CONFLICT DO UPDATE. При потоке сообщений инкременты теряются.
+  2. Нет idempotency в RabbitMQ-консьюмере — при ре-доставке счётчик дублируется.
+  3. Членство в чате не проверяется. ChatHub.JoinChat и SendMessage проверяют только наличие чата в компании, но не
+  membership. Любой сотрудник компании может слушать чужой приватный чат. То же в MessagesController.GetMessages.
+  4. Online presence не масштабируется. static ConcurrentDictionary _onlineUsers в ChatHub — при 2+ репликах ChatService
+   presence ломается, при рестарте сбрасывается. Нужен Redis с TTL и heartbeat.
+  5. Не атомарное создание поста с картинкой. FeedService/PostsController.CreatePost: posts.Add → загрузка в Storage →
+  Update. Если Storage упадёт — пост-сирота. Нужен outbox или предзагрузка.
+  6. Утечка JWT между сервисами. ChatService/Services/UserInfoService при fallback зовёт UserService с JWT вызывающего
+  пользователя, а не service-token.
+  7. new HttpClient() всюду (UserInfoService, RabbitMQConsumerService, ChatsController.DeleteChat) — socket exhaustion.
+  8. Бродкаст-уведомления синхронно. NotificationService/RabbitMQConsumerService для каждого события дёргает UserService
+   за списком сотрудников и шлёт push-и синхронно из консьюмера — на 1000 человек 1000 синхронных запросов блокируют
+  канал RabbitMQ.
+  9. Молчаливые no-op: HandleMessageUpdatedAsync и HandleMessageDeletedAsync помечены async, но без await. UI не
+  обновляется при редактировании/удалении.
+  10. N+1. FeedService.GetPosts для каждого поста: GetLikesCountAsync, GetByPostIdAsync (грузит все комментарии ради
+  Count), IsLikedAsync. ChatsController.GetChats — то же.
+  11. Роли в чатах. LeaveChat не проверяет, что уходит создатель (чат остаётся без админа). DeleteChat доступен любому
+  участнику.
+  12. Frontend auth-флаг в sessionStorage. authStore.isAuthenticated хранится клиентом — ProtectedRoute пускает в UI до
+  проверки cookie сервером.
+  13. Циркулярный импорт authStore → chatStore → authStore.
+  14. WS пересоздаётся при каждом переходе между / и /manage-org из-за того, что useNotifications() вызывается внутри
+  ProtectedRoute.
+
+  ---
+  3. Качество кода
+
+  - Параллельные версии хуков: useNotifications / useNotificationsOptimized, useAuth / useAuthOptimized — в App.tsx
+  смесь. Нужно оставить одну.
+  - CompanyIsolationMiddleware и часть переменных в Gateway/Program.cs:15-18 — мёртвый код.
+  - Везде Console.WriteLine вместо ILogger. Gateway логирует Path на Information — туда попадают ?access_token=... от
+  SignalR.
+  - frontend/src/services/api.ts — есть «raw axios» обходы для multipart, дублируют интерсепторы.
+  - chatStore.pinnedChats: Set<number | string> — смесь типов, при сериализации в JSON Set теряется.
+  - Тема в App.tsx ставится в useEffect → FOUC. Должно быть inline-script в index.html.
+  - В репо нет тестовых проектов и .github/workflows.
+  - В корне сервисов лежат временные *_FIX.md, QUICK_FIX.md, TROUBLESHOOTING.md — лучше перенести в docs/.
+
+  ---
+  4. Доработки (по приоритету)
+
+  Срочно (безопасность):
+  1. Удалить секреты из git, ротировать JWT_SECRET, ADMIN_SECRET, MinIO/RabbitMQ. Перейти на Docker secrets / Vault.
+  2. Убрать VITE_ADMIN_SECRET из фронта; админ-операции — через [Authorize(Roles="Admin")] с JWT, без shared-secret.
+  3. Закрыть порты 5001-5006, 5432, 6379, 5672, 27017, 9000, 9001 наружу — оставить только Gateway (80/443).
+  4. [Authorize] на CompanyService, на Gateway/Companies. Все InternalController — на отдельный Kestrel listener в
+  private network с service-токеном (HMAC/mTLS).
+  5. StorageService: проверять IsPrivate + companyId claim; выдавать pre-signed URL с TTL.
+  6. Rate-limit и lockout в AuthController. Refresh-токены, отзыв через jti-блэклист в Redis.
+  7. Gateway: whitelist заголовков, не пробрасывать X-Admin-Secret/Cookie дальше; перевыдавать service-JWT для
+  внутренних вызовов.
+  8. RandomNumberGenerator для паролей. ImportMembers — не возвращать пароли, отправлять одноразовую ссылку через
+  email/чат.
+  9. Не кэшировать PasswordHash в Redis (сериализовать SafeUser).
+  10. CryptographicOperations.FixedTimeEquals для всех проверок секретов.
+
+  Логические баги:
+  11. Unread-counters через INSERT ... ON CONFLICT (user_id, chat_id) DO UPDATE SET unread = unread + 1.
+  12. Idempotency-key (message-id) в RabbitMQ-консьюмере.
+  13. Проверка membership в JoinChat, SendMessage, GetMessages, DeleteChat, LeaveChat.
+  14. Online presence — Redis с EXPIRE + heartbeat.
+  15. Создание поста + файл — единая транзакция или outbox.
+  16. Реализовать HandleMessageUpdatedAsync/DeletedAsync.
+  17. Заменить HTTP-связь Chat ↔ Notification ↔ User на RabbitMQ-события (инфраструктура уже есть).
+
+  Архитектура:
+  18. Gateway → YARP (streaming, заголовки, healthcheck, rate-limit policies из коробки).
+  19. Вернуть нормальные EF-миграции, выполнять их отдельным job, не в Program.cs.
+  20. Service-to-service auth: shared issuer + service-account JWT либо mTLS.
+  21. OpenTelemetry: traces/metrics/logs → Jaeger + Prometheus + Grafana. Вместо Console.WriteLine.
+  3. Закрыть порты 5001-5006, 5432, 6379, 5672, 27017, 9000, 9001 наружу — оставить только Gateway (80/443).
+  4. [Authorize] на CompanyService, на Gateway/Companies. Все InternalController — на отдельный Kestrel listener в private network с service-токеном (HMAC/mTLS).
+  5. StorageService: проверять IsPrivate + companyId claim; выдавать pre-signed URL с TTL.
+  6. Rate-limit и lockout в AuthController. Refresh-токены, отзыв через jti-блэклист в Redis.
+  7. Gateway: whitelist заголовков, не пробрасывать X-Admin-Secret/Cookie дальше; перевыдавать service-JWT для внутренних вызовов.
+  8. RandomNumberGenerator для паролей. ImportMembers — не возвращать пароли, отправлять одноразовую ссылку через email/чат.
+  9. Не кэшировать PasswordHash в Redis (сериализовать SafeUser).
+  10. CryptographicOperations.FixedTimeEquals для всех проверок секретов.
+
+  Логические баги:
+  11. Unread-counters через INSERT ... ON CONFLICT (user_id, chat_id) DO UPDATE SET unread = unread + 1.
+  12. Idempotency-key (message-id) в RabbitMQ-консьюмере.
+  13. Проверка membership в JoinChat, SendMessage, GetMessages, DeleteChat, LeaveChat.
+  14. Online presence — Redis с EXPIRE + heartbeat.
+  15. Создание поста + файл — единая транзакция или outbox.
+  16. Реализовать HandleMessageUpdatedAsync/DeletedAsync.
+  17. Заменить HTTP-связь Chat ↔ Notification ↔ User на RabbitMQ-события (инфраструктура уже есть).
+
+  Архитектура:
+  18. Gateway → YARP (streaming, заголовки, healthcheck, rate-limit policies из коробки).
+  19. Вернуть нормальные EF-миграции, выполнять их отдельным job, не в Program.cs.
+  20. Service-to-service auth: shared issuer + service-account JWT либо mTLS.
+  21. OpenTelemetry: traces/metrics/logs → Jaeger + Prometheus + Grafana. Вместо Console.WriteLine.
+  22. Все new HttpClient() → IHttpClientFactory + Polly (retry/circuit-breaker/timeout).
+
+  Качество:
+  23. Serilog со структурированными полями.
+  24. EF: .CountAsync() / single grouped query вместо загрузки коллекций.
+  25. Unit-тесты (xUnit) + integration (Testcontainers).
+  26. CI: GitHub Actions — build, test, dotnet format, trivy/grype для образов.
+  27. Frontend: убрать дубли *Optimized, тему — в index.html, типизировать pinnedChats: Set<number>, починить циркулярный импорт сторов.
+
+  Фичи (после стабилизации):
+  28. Refresh-токены + сессии в Redis + «выйти со всех устройств».
+  29. ClamAV sidecar для StorageService.
+  30. WebPush для уведомлений вне открытой вкладки.
+  31. Поиск по сообщениям/постам (Postgres FTS или Meilisearch).
+  32. Audit log админ-действий.

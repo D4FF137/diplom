@@ -1,0 +1,39 @@
+{
+    # Локальная разработка: отключаем автоматический HTTPS,
+    # чтобы Caddy не пытался получить сертификат для localhost.
+    auto_https off
+}
+
+:80 {
+    encode gzip
+
+    # SignalR хабы — Caddy сам корректно делает WebSocket upgrade.
+    # Используем handle (а не handle_path), чтобы префикс /chatHub не срезался —
+    # SignalR ожидает запросы вида /chatHub/negotiate, /chatHub?id=...
+    handle /chatHub* {
+        reverse_proxy chatservice:5004
+    }
+
+    handle /feedHub* {
+        reverse_proxy feedservice:5003
+    }
+
+    handle /notificationsHub* {
+        reverse_proxy notificationservice:5005
+    }
+
+    # REST API — всё, что начинается с /api, идёт в Gateway
+    handle /api/* {
+        reverse_proxy gateway:5000
+    }
+
+    # Health-check Gateway отдельно (без префикса /api)
+    handle /health {
+        reverse_proxy gateway:5000
+    }
+
+    # Всё остальное — фронт (React SPA)
+    handle {
+        reverse_proxy frontend:80
+    }
+}

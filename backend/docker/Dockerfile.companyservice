@@ -1,0 +1,33 @@
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine AS base
+WORKDIR /app
+EXPOSE 5002
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+
+# Copy shared projects
+COPY ["shared/Common/Common.csproj", "shared/Common/"]
+COPY ["shared/Models/Models.csproj", "shared/Models/"]
+
+# Copy CompanyService project
+COPY ["src/CompanyService/CompanyService.csproj", "src/CompanyService/"]
+
+# Restore dependencies
+RUN dotnet restore "src/CompanyService/CompanyService.csproj"
+
+# Copy everything else and build
+COPY . .
+WORKDIR "/src/src/CompanyService"
+RUN dotnet build "CompanyService.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "CompanyService.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+RUN apk add --no-cache curl icu-libs
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "CompanyService.dll"]
+
+

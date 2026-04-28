@@ -1,0 +1,47 @@
+name: coursework
+
+include:
+  - backend/docker-compose.yml
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost/api
+        VITE_WS_URL: http://localhost
+        VITE_FEED_WS_URL: http://localhost
+        VITE_NOTIFICATION_WS_URL: http://localhost
+        VITE_ADMIN_SECRET: ${ADMIN_SECRET:-change-me-in-production}
+    container_name: frontend
+    expose:
+      - "80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - default
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - default
+
+volumes:
+  caddy_data:
+  caddy_config:

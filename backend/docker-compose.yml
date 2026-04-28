@@ -1,0 +1,347 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-corporate_social_network}
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-all-databases.sh:/docker-entrypoint-initdb.d/init-all-databases.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    expose:
+      - "5672"
+      - "15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  companyservice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.companyservice
+    container_name: companyservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5002
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=companyservice_db;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres_password}
+    expose:
+      - "5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5002/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  userservice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.userservice
+    container_name: userservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5001
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=userservice_db;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres_password}
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - JWT_EXPIRATION_MINUTES=${JWT_EXPIRATION_MINUTES:-60}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ADMIN_SECRET=${ADMIN_SECRET:-change-me-in-production}
+    expose:
+      - "5001"
+    volumes:
+      - userservice_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  feedservice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.feedservice
+    container_name: feedservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5003
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=feedservice_db;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres_password}
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    expose:
+      - "5003"
+    volumes:
+      - feedservice_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5003/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  chatservice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.chatservice
+    container_name: chatservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5004
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - MongoDbSettings__ConnectionString=mongodb://mongo:27017
+      - MongoDbSettings__DatabaseName=chatservice_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    expose:
+      - "5004"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5004/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    expose:
+      - "27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  notificationservice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.notificationservice
+    container_name: notificationservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5005
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=notificationservice_db;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres_password}
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CHAT_SERVICE_URL=http://chatservice:5004
+      - USER_SERVICE_URL=http://userservice:5001
+    expose:
+      - "5005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chatservice:
+        condition: service_healthy
+      userservice:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5005/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  storageservice:
+    build:
+      context: .
+      dockerfile: src/StorageService/Dockerfile
+    container_name: storageservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5006
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - MONGODB_CONNECTION_STRING=mongodb://mongo:27017
+      - MONGODB_DATABASE=storage_db
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadminpassword
+      - MINIO_BUCKET_NAME=storage
+    expose:
+      - "5006"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5006/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    container_name: gateway
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - USER_SERVICE_URL=http://userservice:5001
+      - COMPANY_SERVICE_URL=http://companyservice:5002
+      - FEED_SERVICE_URL=http://feedservice:5003
+      - CHAT_SERVICE_URL=http://chatservice:5004
+      - NOTIFICATION_SERVICE_URL=http://notificationservice:5005
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - ADMIN_SECRET=${ADMIN_SECRET:-change-me-in-production}
+      - STORAGE_SERVICE_URL=http://storageservice:5006
+    expose:
+      - "5000"
+    depends_on:
+      userservice:
+        condition: service_healthy
+      companyservice:
+        condition: service_healthy
+      feedservice:
+        condition: service_healthy
+      chatservice:
+        condition: service_healthy
+      notificationservice:
+        condition: service_healthy
+      storageservice:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  userservice_uploads:
+  feedservice_uploads:
+  mongo_data:
+  storageservice_uploads:
+  minio_data:
+
+networks:
+  default:
+    name: corporate_social_network
+    driver: bridge
+
+
