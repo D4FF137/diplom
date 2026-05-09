@@ -61,6 +61,7 @@ public class RabbitMQConsumerService : BackgroundService
                 _channel.QueueBind(queueName, _exchangeName, "message.updated");
                 _channel.QueueBind(queueName, _exchangeName, "message.deleted");
                 _channel.QueueBind(queueName, _exchangeName, "post.created");
+                _channel.QueueBind(queueName, _exchangeName, "task.created");
                 _channel.BasicQos(prefetchSize: 0, prefetchCount: 1, global: false);
 
                 _logger.LogInformation("Successfully connected to RabbitMQ");
@@ -138,6 +139,14 @@ public class RabbitMQConsumerService : BackgroundService
                     if (eventData != null)
                     {
                         await HandlePostCreatedAsync(eventData);
+                    }
+                }
+                else if (routingKey == "task.created")
+                {
+                    var eventData = JsonSerializer.Deserialize<TaskCreatedEvent>(message);
+                    if (eventData != null)
+                    {
+                        await HandleTaskCreatedAsync(eventData);
                     }
                 }
 
@@ -291,6 +300,84 @@ public class RabbitMQConsumerService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling post created event for post {PostId}", eventData.PostId);
+            throw;
+        }
+    }
+
+    private async Task HandleTaskCreatedAsync(TaskCreatedEvent eventData)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var httpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
+
+        _logger.LogInformation(
+            "[RabbitMQ] Task created event received: TaskId={TaskId}, CreatorId={CreatorId}, CompanyId={CompanyId}",
+            eventData.TaskId,
+            eventData.CreatorId,
+            eventData.CompanyId);
+
+        try
+        {
+            List<int> recipientUserIds = new();
+
+            if (eventData.TargetUserId.HasValue)
+            {
+                recipientUserIds.Add(eventData.TargetUserId.Value);
+            }
+            else if (eventData.TargetGroupId.HasValue)
+            {
+                var userServiceUrl = configuration["USER_SERVICE_URL"] ?? "http://userservice:5001";
+                var client = httpClientFactory.CreateClient();
+                var response = await client.GetAsync($"{userServiceUrl}/api/internal/groups/{eventData.TargetGroupId.Value}/members");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var content = await response.Content.ReadAsStringAsync();
+                    var members = JsonSerializer.Deserialize<List<MemberResponse>>(content, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                    if (members != null)
+                    {
+                        recipientUserIds.AddRange(members.Select(m => m.Id));
+                    }
+                }
+            }
+            else
+            {
+                var userServiceUrl = configuration["USER_SERVICE_URL"] ?? "http://userservice:5001";
+                var client = httpClientFactory.CreateClient();
+                var response = await client.GetAsync($"{userServiceUrl}/api/internal/users?companyId={eventData.CompanyId}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var content = await response.Content.ReadAsStringAsync();
+                    var users = JsonSerializer.Deserialize<List<UserResponse>>(content, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                    if (users != null)
+                    {
+                        recipientUserIds.AddRange(users.Select(u => u.Id));
+                    }
+                }
+            }
+
+            recipientUserIds = recipientUserIds.Where(id => id != eventData.CreatorId).Distinct().ToList();
+
+            if (recipientUserIds.Any())
+            {
+                var eventKey = $"{eventData.CompanyId}:{eventData.TaskId}";
+                await notificationService.IncrementTaskUnreadForEventAsync(
+                    eventKey,
+                    eventData.CompanyId,
+                    recipientUserIds);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling task created event for task {TaskId}", eventData.TaskId);
             throw;
         }
     }

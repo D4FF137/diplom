@@ -11,6 +11,7 @@ public class NotificationDbContext : DbContext
 
     public DbSet<UnreadMessage> UnreadMessages { get; set; }
     public DbSet<UnreadFeed> UnreadFeeds { get; set; }
+    public DbSet<UnreadTask> UnreadTasks { get; set; }
     public DbSet<ProcessedNotificationEvent> ProcessedNotificationEvents { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -37,6 +38,22 @@ public class NotificationDbContext : DbContext
         modelBuilder.Entity<UnreadFeed>(entity =>
         {
             entity.ToTable("unreadfeeds");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => new { e.UserId, e.CompanyId }).IsUnique();
+            
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.CompanyId).HasColumnName("companyid");
+            entity.Property(e => e.UserId).HasColumnName("userid");
+            entity.Property(e => e.Count).HasColumnName("count");
+            entity.Property(e => e.LastReadAt).HasColumnName("lastreadat");
+            entity.Property(e => e.LastUpdatedAt).HasColumnName("lastupdatedat");
+        });
+        
+        modelBuilder.Entity<UnreadTask>(entity =>
+        {
+            entity.ToTable("unreadtasks");
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.CompanyId);
             entity.HasIndex(e => e.UserId);

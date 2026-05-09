@@ -14,6 +14,7 @@ const ChatWindow = lazy(() => import('../chat/ChatWindow').then(m => ({ default:
 const FeedCenter = lazy(() => import('../feed/FeedCenter').then(m => ({ default: m.FeedCenter })));
 const StoragePage = lazy(() => import('../storage/StoragePage').then(m => ({ default: m.StoragePage })));
 const ProfileModal = lazy(() => import('../profile/ProfileModal').then(m => ({ default: m.ProfileModal })));
+const TasksPage = lazy(() => import('../tasks/TasksPage').then(m => ({ default: m.TasksPage })));
 
 const TelegramLayoutComponent = () => {
   const user = useAuthStore((state) => state.user);
@@ -25,10 +26,10 @@ const TelegramLayoutComponent = () => {
 
   const { refetch: loadChats } = useChats();
   // Инициализируем уведомления - это подключит WebSocket и загрузит счетчики
-  const { getTotalChatUnread, feedUnread, isConnected } = useNotifications();
+  const { getTotalChatUnread, feedUnread, tasksUnread, isConnected } = useNotifications();
 
   const [showProfile, setShowProfile] = useState(false);
-  const [currentView, setCurrentView] = useState<'chats' | 'feed' | 'files'>('chats');
+  const [currentView, setCurrentView] = useState<'chats' | 'feed' | 'files' | 'tasks'>('chats');
 
   // Мемоизация вычислений
   const getUserDisplayName = useMemo(() => {
@@ -125,6 +126,7 @@ const TelegramLayoutComponent = () => {
     if (selectedChat) return `Чат: ${selectedChat.name}`;
     if (currentView === 'files') return 'Файлы и Документы';
     if (currentView === 'feed') return 'Корпоративная Лента';
+    if (currentView === 'tasks') return 'Задачи и Чек-листы';
     return 'Мессенджер';
   }, [selectedChat, currentView]);
 
@@ -158,6 +160,15 @@ const TelegramLayoutComponent = () => {
               className={`text-base sm:text-lg font-semibold transition-colors shrink-0 ${currentView === 'files' ? 'text-apple-blue' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'}`}
             >
               Файлы
+            </button>
+            <button
+              onClick={() => { setCurrentView('tasks'); selectChat(null); }}
+              className={`text-base sm:text-lg font-semibold transition-colors shrink-0 ${currentView === 'tasks' ? 'text-apple-blue' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'} relative`}
+            >
+              Задачи
+              {tasksUnread > 0 && (
+                <span className="absolute -top-1 -right-2 w-2 h-2 bg-red-500 rounded-full"></span>
+              )}
             </button>
             {!isConnected && (
               <span className="text-xs text-yellow-600 dark:text-yellow-400" title="Уведомления не подключены">
@@ -229,6 +240,31 @@ const TelegramLayoutComponent = () => {
               </div>
               <div className="flex-1 overflow-hidden">
                 <StoragePage />
+              </div>
+            </div>
+          ) : currentView === 'tasks' ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+               <div className="h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4 sm:px-6 shrink-0">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentView('chats')}
+                    className="p-2 -ml-2 text-gray-400 hover:text-apple-blue md:hidden transition-colors"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <h2 className="text-lg font-semibold dark:text-white">Задачи</h2>
+                </div>
+                <button
+                  onClick={() => setCurrentView('chats')}
+                  className="text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white px-3 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                >
+                  К чатам
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <TasksPage />
               </div>
             </div>
           ) : (

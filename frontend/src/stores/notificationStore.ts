@@ -14,6 +14,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
   counters: {
     chatUnread: {},
     feedUnread: 0,
+    tasksUnread: 0,
   },
   isConnected: false,
 

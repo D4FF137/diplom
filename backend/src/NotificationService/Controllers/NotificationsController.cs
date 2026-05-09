@@ -92,5 +92,27 @@ public class NotificationsController : ControllerBase
             return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
         }
     }
+
+    [HttpPost("tasks/read")]
+    public async Task<IActionResult> MarkTasksAsRead()
+    {
+        try
+        {
+            var companyId = _jwtHelper.GetCompanyIdFromToken(User);
+            var userId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "0");
+            
+            if (!companyId.HasValue || userId == 0)
+            {
+                return Unauthorized();
+            }
+
+            await _notificationService.ResetTaskUnreadAsync(userId, companyId.Value);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+        }
+    }
 }
 

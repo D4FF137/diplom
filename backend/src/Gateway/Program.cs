@@ -16,6 +16,7 @@ var userServiceUrl = builder.Configuration["USER_SERVICE_URL"] ?? "http://userse
 var companyServiceUrl = builder.Configuration["COMPANY_SERVICE_URL"] ?? "http://companyservice:5002";
 var feedServiceUrl = builder.Configuration["FEED_SERVICE_URL"] ?? "http://feedservice:5003";
 var chatServiceUrl = builder.Configuration["CHAT_SERVICE_URL"] ?? "http://chatservice:5004";
+var taskServiceUrl = builder.Configuration["TASK_SERVICE_URL"] ?? "http://taskservice:5007";
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

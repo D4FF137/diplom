@@ -57,6 +57,19 @@ export interface Chat {
   lastMessage?: string;
   isPinned?: boolean;
   creatorId?: number;
+  companyGroupId?: number;
+  isSystem?: boolean;
+}
+
+export interface CompanyGroup {
+  id: number;
+  companyId: number;
+  name: string;
+  leaderUserId: number;
+  chatId: string;
+  createdByUserId: number;
+  createdAt: string;
+  memberIds: number[];
 }
 
 export interface Reaction {
@@ -117,6 +130,7 @@ export interface AuthResponse {
 export interface NotificationCounters {
   chatUnread: Record<string, number>; // chatId -> count
   feedUnread: number;
+  tasksUnread: number;
 }
 
 export interface FileMetadata {
@@ -130,4 +144,33 @@ export interface FileMetadata {
   isImportant: boolean;
   isPrivate: boolean;
   createdAt: string;
+}
+
+export type TaskStatus = 'Todo' | 'InProgress' | 'Done' | 'Cancelled';
+export type TaskPriority = 'Low' | 'Medium' | 'High' | 'Urgent';
+export type TaskType = 'Simple' | 'Checklist';
+
+export interface ChecklistItem {
+  id: number;
+  taskId: number;
+  content: string;
+  isCompleted: boolean;
+  completedByUserId?: number;
+  completedAt?: string;
+}
+
+export interface UserTask {
+  id: number;
+  companyId: number;
+  creatorId: number;
+  targetGroupId?: number;
+  targetUserId?: number;
+  title: string;
+  description: string;
+  type: TaskType;
+  priority: TaskPriority;
+  status: TaskStatus;
+  dueDate?: string;
+  createdAt: string;
+  checklistItems?: ChecklistItem[];
 }

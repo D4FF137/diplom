@@ -15,13 +15,20 @@ public class UsersController : ControllerBase
     private readonly IUserService _userService;
     private readonly JwtHelper _jwtHelper;
     private readonly IFileService _fileService;
+    private readonly ICompanyGroupService _groupService;
     private readonly IConfiguration _config;
 
-    public UsersController(IUserService userService, JwtHelper jwtHelper, IFileService fileService, IConfiguration config)
+    public UsersController(
+        IUserService userService,
+        JwtHelper jwtHelper,
+        IFileService fileService,
+        ICompanyGroupService groupService,
+        IConfiguration config)
     {
         _userService = userService;
         _jwtHelper = jwtHelper;
         _fileService = fileService;
+        _groupService = groupService;
         _config = config;
     }
 
@@ -84,6 +91,10 @@ public class UsersController : ControllerBase
                 Role = role
             };
             var created = await _userService.CreateAsync(user, request.Password);
+            if (created.Role == "Boss")
+            {
+                await _groupService.AddBossToDepartmentChatsAsync(created.CompanyId, created.Id);
+            }
             return CreatedAtAction(nameof(GetUser), new { id = created.Id }, ToSafe(created));
         }
 
@@ -102,15 +113,24 @@ public class UsersController : ControllerBase
         if (existing != null)
             return BadRequest(new { message = "User with this email already exists" });
 
+        var requestedRole = request.Role?.Trim() == "Boss" ? "Boss" : "Worker";
         var member = new User
         {
             CompanyId = companyId.Value,
             Email = request.Email.Trim(),
             FirstName = request.FirstName ?? "",
             LastName = request.LastName ?? "",
-            Role = "Worker"
+            Role = requestedRole
         };
         var createdMember = await _userService.CreateAsync(member, request.Password);
+        if (createdMember.Role == "Boss")
+        {
+            await _groupService.AddBossToDepartmentChatsAsync(companyId.Value, createdMember.Id);
+        }
+        if (request.GroupIds?.Any() == true)
+        {
+            await _groupService.AddMemberToGroupsAsync(companyId.Value, createdMember.Id, request.GroupIds);
+        }
         return CreatedAtAction(nameof(GetUser), new { id = createdMember.Id }, ToSafe(createdMember));
     }
 
@@ -131,15 +151,24 @@ public class UsersController : ControllerBase
         if (existing != null)
             return BadRequest(new { message = "User with this email already exists" });
 
+        var requestedRole = request.Role?.Trim() == "Boss" ? "Boss" : "Worker";
         var member = new User
         {
             CompanyId = companyId.Value,
             Email = request.Email.Trim(),
             FirstName = request.FirstName ?? "",
             LastName = request.LastName ?? "",
-            Role = "Worker"
+            Role = requestedRole
         };
         var created = await _userService.CreateAsync(member, request.Password);
+        if (created.Role == "Boss")
+        {
+            await _groupService.AddBossToDepartmentChatsAsync(companyId.Value, created.Id);
+        }
+        if (request.GroupIds?.Any() == true)
+        {
+            await _groupService.AddMemberToGroupsAsync(companyId.Value, created.Id, request.GroupIds);
+        }
         return CreatedAtAction(nameof(GetUser), new { id = created.Id }, ToSafe(created));
     }
 
@@ -368,6 +397,7 @@ public class CreateUserRequest
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string? Role { get; set; }
+    public List<int>? GroupIds { get; set; }
 }
 
 public class BossCreateMemberRequest
@@ -376,6 +406,8 @@ public class BossCreateMemberRequest
     public string Password { get; set; } = string.Empty;
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
+    public string? Role { get; set; }
+    public List<int>? GroupIds { get; set; }
 }
 
 public class UpdateUserRequest

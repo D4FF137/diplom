@@ -102,14 +102,25 @@ export const useNotifications = () => {
   }, []);
 
   const feedUnread = useNotificationStore((state) => state.counters.feedUnread);
+  const tasksUnread = useNotificationStore((state) => state.counters.tasksUnread);
+
+  const markTasksAsRead = useCallback(async () => {
+    try {
+      await notificationAPI.markTasksAsRead();
+    } catch (error) {
+      console.error('[Notifications] Error marking tasks as read:', error);
+    }
+  }, []);
 
   return {
     counters,
     isConnected,
     markChatAsRead,
     markFeedAsRead,
+    markTasksAsRead,
     getChatUnreadCount,
     getTotalChatUnread,
     feedUnread,
+    tasksUnread,
   };
 };

@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../../stores/authStore';
-import { usersAPI } from '../../services/api';
-import type { User } from '../../types';
+import { groupsAPI, usersAPI } from '../../services/api';
+import type { CompanyGroup, User } from '../../types';
 
 export function ManageOrgPage() {
   const user = useAuthStore((s) => s.user);
 
   const [members, setMembers] = useState<User[]>([]);
+  const [groups, setGroups] = useState<CompanyGroup[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -16,6 +17,8 @@ export function ManageOrgPage() {
   const [addPassword, setAddPassword] = useState('');
   const [addFirstName, setAddFirstName] = useState('');
   const [addLastName, setAddLastName] = useState('');
+  const [addRole, setAddRole] = useState<'Worker' | 'Boss'>('Worker');
+  const [addGroupIds, setAddGroupIds] = useState<number[]>([]);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
@@ -27,6 +30,12 @@ export function ManageOrgPage() {
   const [newPassword, setNewPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [groupName, setGroupName] = useState('');
+  const [groupLeaderId, setGroupLeaderId] = useState<number | ''>('');
+  const [groupMemberIds, setGroupMemberIds] = useState<number[]>([]);
+  const [groupLoading, setGroupLoading] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [groupSuccess, setGroupSuccess] = useState<string | null>(null);
 
   const isBoss = user?.role === 'Boss';
 
@@ -34,8 +43,12 @@ export function ManageOrgPage() {
     try {
       setLoading(true);
       setError(null);
-      const list = await usersAPI.getMembers();
+      const [list, groupList] = await Promise.all([
+        usersAPI.getMembers(),
+        groupsAPI.getAll(),
+      ]);
       setMembers(list);
+      setGroups(groupList);
     } catch (e: unknown) {
       setError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Ошибка загрузки');
     } finally {
@@ -51,8 +64,12 @@ export function ManageOrgPage() {
     try {
       setLoading(true);
       setError(null);
-      const list = await usersAPI.search(search.trim());
+      const [list, groupList] = await Promise.all([
+        usersAPI.search(search.trim()),
+        groupsAPI.getAll(),
+      ]);
       setMembers(list);
+      setGroups(groupList);
     } catch (e: unknown) {
       setError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Ошибка поиска');
     } finally {
@@ -81,12 +98,16 @@ export function ManageOrgPage() {
         password: addPassword,
         firstName: addFirstName.trim() || undefined,
         lastName: addLastName.trim() || undefined,
+        role: addRole,
+        groupIds: addGroupIds,
       });
       setAddSuccess('Участник добавлен.');
       setAddEmail('');
       setAddPassword('');
       setAddFirstName('');
       setAddLastName('');
+      setAddRole('Worker');
+      setAddGroupIds([]);
       await load();
     } catch (e: unknown) {
       setAddError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Ошибка');
@@ -176,6 +197,35 @@ export function ManageOrgPage() {
     }
   }
 
+  async function handleCreateGroup(e: React.FormEvent) {
+    e.preventDefault();
+    if (!groupLeaderId) return;
+
+    setGroupLoading(true);
+    setGroupError(null);
+    setGroupSuccess(null);
+    try {
+      await groupsAPI.create({
+        name: groupName.trim(),
+        leaderUserId: Number(groupLeaderId),
+        memberIds: groupMemberIds,
+      });
+      setGroupSuccess('Группа создана, системный чат добавлен.');
+      setGroupName('');
+      setGroupLeaderId('');
+      setGroupMemberIds([]);
+      await load();
+    } catch (e: unknown) {
+      setGroupError((e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Ошибка создания группы');
+    } finally {
+      setGroupLoading(false);
+    }
+  }
+
+  function toggleNumber(list: number[], id: number) {
+    return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+  }
+
   if (!user) return null;
   if (!isBoss) return <Navigate to="/" replace />;
 
@@ -244,6 +294,38 @@ export function ManageOrgPage() {
                 value={addLastName}
                 onChange={(e) => setAddLastName(e.target.value)}
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-gray-300">Роль</label>
+              <select
+                className="input-field"
+                value={addRole}
+                onChange={(e) => setAddRole(e.target.value as 'Worker' | 'Boss')}
+              >
+                <option value="Worker">Сотрудник</option>
+                <option value="Boss">Boss / админ</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-gray-300">Группы</label>
+              <div className="min-h-[42px] rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-2 bg-white dark:bg-gray-900">
+                {groups.length === 0 ? (
+                  <span className="text-sm text-gray-400">Групп пока нет</span>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {groups.map((group) => (
+                      <label key={group.id} className="inline-flex items-center gap-2 text-sm dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={addGroupIds.includes(group.id)}
+                          onChange={() => setAddGroupIds((ids) => toggleNumber(ids, group.id))}
+                        />
+                        {group.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="sm:col-span-2 flex flex-col sm:flex-row gap-4">
               <button type="submit" className="btn-primary flex-1" disabled={addLoading || importLoading}>
@@ -317,6 +399,94 @@ export function ManageOrgPage() {
               </motion.div>
             )}
           </AnimatePresence>
+        </motion.section>
+
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.03 }}
+          className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-6 shadow-sm"
+        >
+          <h2 className="text-lg font-medium dark:text-white mb-4">Группы и отделы</h2>
+          {groupError && (
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl text-sm">
+              {groupError}
+            </div>
+          )}
+          {groupSuccess && (
+            <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-xl text-sm">
+              {groupSuccess}
+            </div>
+          )}
+          <form onSubmit={handleCreateGroup} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-gray-300">Название</label>
+              <input
+                type="text"
+                className="input-field"
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-gray-300">Начальник группы</label>
+              <select
+                className="input-field"
+                value={groupLeaderId}
+                onChange={(e) => setGroupLeaderId(e.target.value ? Number(e.target.value) : '')}
+                required
+              >
+                <option value="">Выберите сотрудника</option>
+                {members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {[member.firstName, member.lastName].filter(Boolean).join(' ') || member.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium mb-1 dark:text-gray-300">Участники</label>
+              <div className="max-h-40 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 p-3 bg-white dark:bg-gray-900">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {members.map((member) => (
+                    <label key={member.id} className="inline-flex items-center gap-2 text-sm dark:text-gray-200">
+                      <input
+                        type="checkbox"
+                        checked={groupMemberIds.includes(member.id)}
+                        onChange={() => setGroupMemberIds((ids) => toggleNumber(ids, member.id))}
+                      />
+                      <span className="truncate">
+                        {[member.firstName, member.lastName].filter(Boolean).join(' ') || member.email}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button type="submit" className="btn-primary sm:col-span-2" disabled={groupLoading || !groupName.trim() || !groupLeaderId}>
+              {groupLoading ? 'Создание...' : 'Создать группу'}
+            </button>
+          </form>
+
+          {groups.length > 0 && (
+            <div className="mt-6 space-y-2">
+              {groups.map((group) => {
+                const leader = members.find((member) => member.id === group.leaderUserId);
+                return (
+                  <div key={group.id} className="rounded-xl border border-gray-100 dark:border-gray-700 p-3">
+                    <div className="font-medium dark:text-white">{group.name}</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                      Начальник: {[leader?.firstName, leader?.lastName].filter(Boolean).join(' ') || leader?.email || group.leaderUserId}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {group.memberIds.length} участников · чат {group.chatId}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </motion.section>
 
         <motion.section

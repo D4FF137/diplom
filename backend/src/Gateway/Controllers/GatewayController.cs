@@ -53,6 +53,19 @@ public class GatewayController : ControllerBase
         return await HandleResponse(response);
     }
 
+    [HttpGet("groups")]
+    [HttpGet("groups/{id}")]
+    [HttpPost("groups")]
+    [HttpPost("groups/{id}/members")]
+    [HttpDelete("groups/{id}/members/{memberUserId}")]
+    [Authorize]
+    public async Task<IActionResult> Groups()
+    {
+        var path = Request.Path.Value ?? "";
+        var response = await _routingService.RouteToUserServiceAsync(Request, path);
+        return await HandleResponse(response);
+    }
+
     // Company Service Routes
     [HttpGet("companies")]
     [HttpGet("companies/{id}")]
@@ -184,12 +197,28 @@ public class GatewayController : ControllerBase
     [HttpGet("notifications/counters")]
     [HttpPost("notifications/chats/{id}/read")]
     [HttpPost("notifications/feed/read")]
+    [HttpPost("notifications/tasks/read")]
     [Authorize]
     public async Task<IActionResult> Notifications()
     {
         // Convert /api/notifications/* to /api/notifications/*
         var path = Request.Path.Value ?? "";
         var response = await _routingService.RouteToNotificationServiceAsync(Request, path);
+        return await HandleResponse(response);
+    }
+
+    // Task Service Routes
+    [HttpGet("tasks")]
+    [HttpGet("tasks/{id}")]
+    [HttpPost("tasks")]
+    [HttpPut("tasks/{id}/status")]
+    [HttpPost("tasks/items/{itemId}/toggle")]
+    [HttpDelete("tasks/{id}")]
+    [Authorize]
+    public async Task<IActionResult> Tasks()
+    {
+        var path = Request.Path.Value ?? "";
+        var response = await _routingService.RouteToTaskServiceAsync(Request, path);
         return await HandleResponse(response);
     }
 
@@ -250,53 +279,15 @@ public class GatewayController : ControllerBase
             response.StatusCode, content?.Length ?? 0, response.Content.Headers.ContentType?.ToString() ?? "none");
         
         // Determine content type
-        string contentType = "application/json; charset=utf-8";
-        if (response.Content.Headers.ContentType != null)
-        {
-            contentType = response.Content.Headers.ContentType.ToString();
-        }
-        else if (!string.IsNullOrEmpty(content) && (content.TrimStart().StartsWith("{") || content.TrimStart().StartsWith("[")))
-        {
-            contentType = "application/json; charset=utf-8";
-        }
-        else if (!string.IsNullOrEmpty(content))
-        {
-            contentType = "text/plain; charset=utf-8";
-        }
+        string contentType = response.Content.Headers.ContentType?.ToString() ?? "application/json; charset=utf-8";
         
         // Return empty response if no content
         if (string.IsNullOrEmpty(content))
         {
-            Response.StatusCode = (int)response.StatusCode;
-            Response.ContentType = contentType;
-            return new EmptyResult();
+            return StatusCode((int)response.StatusCode);
         }
         
-        // Return JSON response using ObjectResult for proper serialization
-        var isJson = contentType.Contains("json") || 
-                     (content.TrimStart().StartsWith("{") || content.TrimStart().StartsWith("["));
-        
-        if (isJson)
-        {
-            try
-            {
-                // Parse and return as object for proper JSON serialization
-                var jsonDoc = System.Text.Json.JsonDocument.Parse(content);
-                var jsonObject = System.Text.Json.JsonSerializer.Deserialize<object>(content);
-                
-                return new ObjectResult(jsonObject)
-                {
-                    StatusCode = (int)response.StatusCode
-                };
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to parse JSON response, returning as string");
-                // If parsing fails, return as string
-            }
-        }
-        
-        // Return as string content
+        // Just return the content as is, no need to deserialize and re-serialize
         return new ContentResult
         {
             StatusCode = (int)response.StatusCode,
@@ -307,13 +298,24 @@ public class GatewayController : ControllerBase
 
     private void CopyProxyResponseHeaders(HttpResponseMessage response)
     {
-        if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
+        foreach (var header in response.Headers)
         {
-            foreach (var cookie in cookies)
-            {
-                Response.Headers.Append("Set-Cookie", cookie);
-            }
+            // Skip hop-by-hop headers
+            if (header.Key.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Connection", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            Response.Headers.Append(header.Key, header.Value.ToArray());
+        }
+
+        foreach (var header in response.Content.Headers)
+        {
+            // Skip content headers that we set ourselves in ContentResult
+            if (header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            Response.Headers.Append(header.Key, header.Value.ToArray());
         }
     }
 }
-

@@ -10,7 +10,10 @@ import type {
   Like,
   Comment,
   NotificationCounters,
-  FileMetadata
+  FileMetadata,
+  CompanyGroup,
+  UserTask,
+  TaskStatus
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -195,6 +198,10 @@ export const notificationAPI = {
   markFeedAsRead: async (): Promise<void> => {
     await api.post('/notifications/feed/read');
   },
+  
+  markTasksAsRead: async (): Promise<void> => {
+    await api.post('/notifications/tasks/read');
+  },
 };
 
 // Users API
@@ -232,7 +239,14 @@ export const usersAPI = {
     await api.post('/users/me/password', data);
   },
 
-  createMember: async (data: { email: string; password: string; firstName?: string; lastName?: string }): Promise<User> => {
+  createMember: async (data: {
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+    role?: 'Boss' | 'Worker';
+    groupIds?: number[];
+  }): Promise<User> => {
     const response = await api.post<User>('/users/members', data);
     return response.data;
   },
@@ -252,6 +266,31 @@ export const usersAPI = {
   importMembers: async (data: { email: string, firstName?: string, lastName?: string }[]): Promise<{ email: string, password?: string, error?: string, success: boolean }[]> => {
     const response = await api.post('/users/import', data);
     return response.data;
+  },
+};
+
+export const groupsAPI = {
+  getAll: async (): Promise<CompanyGroup[]> => {
+    const response = await api.get<CompanyGroup[]>('/groups');
+    return response.data;
+  },
+
+  getById: async (id: number): Promise<CompanyGroup> => {
+    const response = await api.get<CompanyGroup>(`/groups/${id}`);
+    return response.data;
+  },
+
+  create: async (data: { name: string; leaderUserId: number; memberIds?: number[] }): Promise<CompanyGroup> => {
+    const response = await api.post<CompanyGroup>('/groups', data);
+    return response.data;
+  },
+
+  addMember: async (groupId: number, userId: number): Promise<void> => {
+    await api.post(`/groups/${groupId}/members`, { userId });
+  },
+
+  removeMember: async (groupId: number, userId: number): Promise<void> => {
+    await api.delete(`/groups/${groupId}/members/${userId}`);
   },
 };
 
@@ -280,6 +319,44 @@ export const storageAPI = {
 
   deleteFile: async (id: string): Promise<void> => {
     await api.delete(`/storage/files/${id}`);
+  },
+};
+
+// Tasks API
+export const tasksAPI = {
+  getTasks: async (): Promise<UserTask[]> => {
+    const response = await api.get<UserTask[]>('/tasks');
+    return response.data;
+  },
+
+  createTask: async (data: {
+    title: string;
+    description: string;
+    targetGroupId?: number;
+    targetUserId?: number;
+    type: string;
+    priority: string;
+    dueDate?: string;
+    checklistItems?: string[];
+  }): Promise<UserTask> => {
+    const response = await api.post<UserTask>('/tasks', data);
+    return response.data;
+  },
+
+  updateStatus: async (id: number, status: TaskStatus): Promise<void> => {
+    await api.put(`/tasks/${id}/status`, JSON.stringify(status), {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  },
+
+  toggleItem: async (itemId: number): Promise<void> => {
+    await api.post(`/tasks/items/${itemId}/toggle`);
+  },
+
+  deleteTask: async (id: number): Promise<void> => {
+    await api.delete(`/tasks/${id}`);
   },
 };
 

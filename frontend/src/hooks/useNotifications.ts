@@ -7,6 +7,7 @@ export const useNotifications = () => {
   const [counters, setCounters] = useState<NotificationCounters>({
     chatUnread: {},
     feedUnread: 0,
+    tasksUnread: 0,
   });
   const [isConnected, setIsConnected] = useState(false);
 

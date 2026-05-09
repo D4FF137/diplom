@@ -285,6 +285,41 @@ services:
       retries: 3
       start_period: 40s
 
+  taskservice:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.taskservice
+    container_name: taskservice
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5007
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=taskservice_db;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres_password}
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - JWT_ISSUER=${JWT_ISSUER:-CorporateSocialNetwork}
+      - JWT_AUDIENCE=${JWT_AUDIENCE:-CorporateSocialNetwork}
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - USER_SERVICE_URL=http://userservice:5001
+    expose:
+      - "5007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5007/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   gateway:
     build:
       context: .
@@ -307,6 +342,7 @@ services:
       - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
       - ADMIN_SECRET=${ADMIN_SECRET:-change-me-in-production}
       - STORAGE_SERVICE_URL=http://storageservice:5006
+      - TASK_SERVICE_URL=http://taskservice:5007
     expose:
       - "5000"
     depends_on:
@@ -321,6 +357,8 @@ services:
       notificationservice:
         condition: service_healthy
       storageservice:
+        condition: service_healthy
+      taskservice:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]

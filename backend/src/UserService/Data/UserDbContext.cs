@@ -10,6 +10,8 @@ public class UserDbContext : DbContext
     }
 
     public DbSet<User> Users { get; set; }
+    public DbSet<CompanyGroup> CompanyGroups { get; set; }
+    public DbSet<CompanyGroupMember> CompanyGroupMembers { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -68,7 +70,61 @@ public class UserDbContext : DbContext
                 .HasColumnName("lastseen")
                 .IsRequired(false);
         });
+
+        modelBuilder.Entity<CompanyGroup>(entity =>
+        {
+            entity.ToTable("companygroups");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => new { e.CompanyId, e.Name }).IsUnique();
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.CompanyId)
+                .HasColumnName("companyid");
+
+            entity.Property(e => e.Name)
+                .IsRequired()
+                .HasMaxLength(150)
+                .HasColumnName("name");
+
+            entity.Property(e => e.LeaderUserId)
+                .HasColumnName("leaderuserid");
+
+            entity.Property(e => e.ChatId)
+                .IsRequired()
+                .HasMaxLength(64)
+                .HasColumnName("chatid");
+
+            entity.Property(e => e.CreatedByUserId)
+                .HasColumnName("createdbyuserid");
+
+            entity.Property(e => e.CreatedAt)
+                .HasColumnName("createdat")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+        });
+
+        modelBuilder.Entity<CompanyGroupMember>(entity =>
+        {
+            entity.ToTable("companygroupmembers");
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.CompanyGroupId);
+            entity.HasIndex(e => new { e.CompanyGroupId, e.UserId }).IsUnique();
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.CompanyGroupId)
+                .HasColumnName("companygroupid");
+
+            entity.Property(e => e.UserId)
+                .HasColumnName("userid");
+
+            entity.Property(e => e.JoinedAt)
+                .HasColumnName("joinedat")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+        });
     }
 }
-
 

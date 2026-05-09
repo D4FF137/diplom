@@ -75,6 +75,8 @@ builder.Services.AddSingleton(new JwtHelper(jwtSecret, jwtIssuer, jwtAudience, j
 builder.Services.AddScoped<IUserService, UserService.Services.UserService>();
 builder.Services.AddScoped<IRabbitMQService, RabbitMQService>();
 builder.Services.AddScoped<IFileService, FileService>();
+builder.Services.AddScoped<ICompanyGroupService, CompanyGroupService>();
+builder.Services.AddHttpClient();
 
 // Health Checks
 var healthChecksBuilder = builder.Services.AddHealthChecks();
@@ -167,4 +169,3 @@ for (int i = 0; i < maxRetries; i++)
 }
 
 app.Run();
-

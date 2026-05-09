@@ -50,6 +50,12 @@ public class RoutingService : IRoutingService
         return await RouteAsync(request, baseUrl, path);
     }
 
+    public async Task<HttpResponseMessage> RouteToTaskServiceAsync(HttpRequest request, string path)
+    {
+        var baseUrl = _configuration["TASK_SERVICE_URL"] ?? "http://taskservice:5007";
+        return await RouteAsync(request, baseUrl, path);
+    }
+
     private async Task<HttpResponseMessage> RouteAsync(HttpRequest request, string baseUrl, string path)
     {
         var client = _httpClientFactory.CreateClient("proxy");

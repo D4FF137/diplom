@@ -8,6 +8,7 @@ public interface IRoutingService
     Task<HttpResponseMessage> RouteToChatServiceAsync(HttpRequest request, string path);
     Task<HttpResponseMessage> RouteToNotificationServiceAsync(HttpRequest request, string path);
     Task<HttpResponseMessage> RouteToStorageServiceAsync(HttpRequest request, string path);
+    Task<HttpResponseMessage> RouteToTaskServiceAsync(HttpRequest request, string path);
 }
 
 

@@ -104,6 +104,8 @@ public class ChatsController : ControllerBase
                 Type = chat.Type,
                 CreatedAt = chat.CreatedAt,
                 CreatorId = chat.CreatorId,
+                CompanyGroupId = chat.CompanyGroupId,
+                IsSystem = chat.IsSystem,
                 Members = chatMembers,
                 LastMessage = lastMessage,
                 LastMessageAt = lastMessageAt
@@ -191,6 +193,8 @@ public class ChatsController : ControllerBase
                     Type = existingChat.Type,
                     CreatedAt = existingChat.CreatedAt,
                     CreatorId = existingChat.CreatorId,
+                    CompanyGroupId = existingChat.CompanyGroupId,
+                    IsSystem = existingChat.IsSystem,
                     Members = existingChatMembers,
                     LastMessage = existingLastMessage,
                     LastMessageAt = existingLastMessageAt
@@ -245,6 +249,8 @@ public class ChatsController : ControllerBase
             Type = createdChat.Type,
             CreatedAt = createdChat.CreatedAt,
             CreatorId = createdChat.CreatorId,
+            CompanyGroupId = createdChat.CompanyGroupId,
+            IsSystem = createdChat.IsSystem,
             Members = chatMembers,
             LastMessage = (string?)null,
             LastMessageAt = (string?)null
@@ -274,6 +280,11 @@ public class ChatsController : ControllerBase
         if (chat == null)
         {
             return NotFound();
+        }
+
+        if (chat.IsSystem)
+        {
+            return BadRequest(new { message = "System department chats cannot be deleted directly" });
         }
 
         var deleted = await _chatService.DeleteAsync(id, companyId.Value);
@@ -324,6 +335,11 @@ public class ChatsController : ControllerBase
         if (chat == null)
         {
             return NotFound();
+        }
+
+        if (chat.IsSystem)
+        {
+            return BadRequest(new { message = "System department chat membership is managed by organization groups" });
         }
 
         // Проверяем, что пользователь является участником

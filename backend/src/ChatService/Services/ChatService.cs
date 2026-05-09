@@ -23,7 +23,9 @@ public class ChatService : IChatService
             Name = dbChat.Name,
             Type = dbChat.Type,
             CreatedAt = dbChat.CreatedAt,
-            CreatorId = dbChat.CreatorId
+            CreatorId = dbChat.CreatorId,
+            CompanyGroupId = dbChat.CompanyGroupId,
+            IsSystem = dbChat.IsSystem
         };
     }
 
@@ -37,6 +39,8 @@ public class ChatService : IChatService
             Type = chat.Type,
             CreatedAt = chat.CreatedAt,
             CreatorId = chat.CreatorId,
+            CompanyGroupId = chat.CompanyGroupId,
+            IsSystem = chat.IsSystem,
             // MemberIds and LastMessage are empty/null for new chats from shared model
             MemberIds = new List<int>(),
             LastMessage = null
@@ -94,5 +98,4 @@ public class ChatService : IChatService
         return chat != null ? MapToShared(chat) : null;
     }
 }
-
 

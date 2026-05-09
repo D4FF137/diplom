@@ -95,6 +95,18 @@ public class JwtHelper
     {
         return principal?.FindFirst(ClaimTypes.Role)?.Value;
     }
-}
 
+    public int? GetUserIdFromToken(ClaimsPrincipal? principal)
+    {
+        if (principal == null) return null;
+
+        var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (int.TryParse(userIdClaim, out var userId))
+        {
+            return userId;
+        }
+
+        return null;
+    }
+}
 

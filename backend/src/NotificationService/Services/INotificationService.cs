@@ -11,6 +11,8 @@ public interface INotificationService
     Task IncrementFeedUnreadAsync(int userId, int companyId);
     Task<bool> IncrementFeedUnreadForEventAsync(string eventKey, int companyId, IReadOnlyCollection<int> recipientUserIds);
     Task ResetFeedUnreadAsync(int userId, int companyId);
+    Task<bool> IncrementTaskUnreadForEventAsync(string eventKey, int companyId, IReadOnlyCollection<int> recipientUserIds);
+    Task ResetTaskUnreadAsync(int userId, int companyId);
     Task<NotificationCountersDto> GetCountersAsync(int userId, int companyId);
     Task NotifyUserAsync(int userId, NotificationCountersDto counters);
 }

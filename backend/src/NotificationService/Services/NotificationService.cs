@@ -58,6 +58,19 @@ public class NotificationService : INotificationService
                 lastupdatedat = EXCLUDED.lastupdatedat");
     }
 
+    private Task UpsertTaskUnreadAsync(int userId, int companyId)
+    {
+        var now = DateTime.UtcNow;
+
+        return _context.Database.ExecuteSqlInterpolatedAsync($@"
+            INSERT INTO unreadtasks (companyid, userid, ""count"", lastreadat, lastupdatedat)
+            VALUES ({companyId}, {userId}, 1, {now}, {now})
+            ON CONFLICT (userid, companyid)
+            DO UPDATE SET
+                ""count"" = unreadtasks.""count"" + 1,
+                lastupdatedat = EXCLUDED.lastupdatedat");
+    }
+
     public async Task IncrementChatUnreadAsync(string chatId, int userId, int companyId)
     {
         Console.WriteLine($"[NotificationService] IncrementChatUnreadAsync: chatId={chatId}, userId={userId}, companyId={companyId}");
@@ -221,6 +234,63 @@ public class NotificationService : INotificationService
         await NotifyUserAsync(userId, counters);
     }
 
+    public async Task<bool> IncrementTaskUnreadForEventAsync(string eventKey, int companyId, IReadOnlyCollection<int> recipientUserIds)
+    {
+        var recipients = recipientUserIds.Distinct().ToArray();
+
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        if (!await TryRecordProcessedEventAsync("task.created", eventKey))
+        {
+            await transaction.RollbackAsync();
+            return false;
+        }
+
+        foreach (var userId in recipients)
+        {
+            await UpsertTaskUnreadAsync(userId, companyId);
+        }
+
+        await transaction.CommitAsync();
+
+        foreach (var userId in recipients)
+        {
+            var counters = await GetCountersAsync(userId, companyId);
+            await NotifyUserAsync(userId, counters);
+        }
+
+        return true;
+    }
+
+    public async Task ResetTaskUnreadAsync(int userId, int companyId)
+    {
+        var unread = await _context.UnreadTasks
+            .FirstOrDefaultAsync(u => u.UserId == userId && u.CompanyId == companyId);
+
+        if (unread != null)
+        {
+            unread.Count = 0;
+            unread.LastReadAt = DateTime.UtcNow;
+            unread.LastUpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+        else
+        {
+            unread = new UnreadTask
+            {
+                UserId = userId,
+                CompanyId = companyId,
+                Count = 0,
+                LastReadAt = DateTime.UtcNow,
+                LastUpdatedAt = DateTime.UtcNow
+            };
+            _context.UnreadTasks.Add(unread);
+            await _context.SaveChangesAsync();
+        }
+
+        var counters = await GetCountersAsync(userId, companyId);
+        await NotifyUserAsync(userId, counters);
+    }
+
     public async Task<NotificationCountersDto> GetCountersAsync(int userId, int companyId)
     {
         var chatUnreads = await _context.UnreadMessages
@@ -230,13 +300,17 @@ public class NotificationService : INotificationService
         var feedUnread = await _context.UnreadFeeds
             .FirstOrDefaultAsync(u => u.UserId == userId && u.CompanyId == companyId);
 
+        var taskUnread = await _context.UnreadTasks
+            .FirstOrDefaultAsync(u => u.UserId == userId && u.CompanyId == companyId);
+
         var counters = new NotificationCountersDto
         {
             ChatUnread = chatUnreads.ToDictionary(u => u.ChatId.ToString(), u => u.Count),
-            FeedUnread = feedUnread?.Count ?? 0
+            FeedUnread = feedUnread?.Count ?? 0,
+            TasksUnread = taskUnread?.Count ?? 0
         };
 
-        Console.WriteLine($"[NotificationService] GetCountersAsync for user {userId}: Found {chatUnreads.Count} chats with unread messages, FeedUnread={feedUnread?.Count ?? 0}");
+        Console.WriteLine($"[NotificationService] GetCountersAsync for user {userId}: Found {chatUnreads.Count} chats with unread messages, FeedUnread={feedUnread?.Count ?? 0}, TasksUnread={taskUnread?.Count ?? 0}");
         foreach (var unread in chatUnreads)
         {
             Console.WriteLine($"[NotificationService] Chat {unread.ChatId}: {unread.Count} unread messages");

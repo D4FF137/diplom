@@ -42,6 +42,12 @@ public class ChatMemberService : IChatMemberService
 
     public async Task<ChatMember> AddMemberAsync(string chatId, int userId, int companyId)
     {
+        var existingMember = await _memberRepository.GetMemberAsync(chatId, userId);
+        if (existingMember != null && existingMember.CompanyId == companyId)
+        {
+            return MapToShared(existingMember);
+        }
+
         var member = new ChatMember
         {
             Id = MongoDB.Bson.ObjectId.GenerateNewId().ToString(),

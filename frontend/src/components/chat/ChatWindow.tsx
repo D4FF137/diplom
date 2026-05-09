@@ -6,9 +6,10 @@ import { useMessages } from '../../hooks/queries/useMessages';
 import { useNotifications } from '../../hooks/useNotificationsOptimized';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useAuthStore } from '../../stores/authStore';
-import { chatAPI, usersAPI } from '../../services/api';
+import { chatAPI, groupsAPI, usersAPI } from '../../services/api';
 import { getImageUrl } from '../../utils/imageUrl';
-import type { User, Message, Chat } from '../../types';
+import { UserProfileModal } from '../profile/UserProfileModal';
+import type { User, Message, Chat, CompanyGroup } from '../../types';
 
 interface ChatWindowProps {
   chat: Chat;
@@ -43,6 +44,8 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
   const [currentMembers, setCurrentMembers] = useState<User[]>(chat.members || []);
   const [showAddMember, setShowAddMember] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [selectedProfileUserId, setSelectedProfileUserId] = useState<number | null>(null);
+  const [departmentGroup, setDepartmentGroup] = useState<CompanyGroup | null>(null);
 
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
 
@@ -118,6 +121,18 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
     return Object.entries(typingUsers).some(([uid, typing]) => typing && String(uid) !== String(user?.id));
   }, [typingUsers, user?.id]);
 
+  const isMultiUserChat = chat.type === 'group' || chat.type === 'department';
+  const canManageMembers = useMemo(() => {
+    if (!user) return false;
+    if (chat.type === 'group') {
+      return Number(chat.creatorId) === Number(user.id);
+    }
+    if (chat.type === 'department') {
+      return user.role === 'Boss' || Number(departmentGroup?.leaderUserId) === Number(user.id);
+    }
+    return false;
+  }, [chat.creatorId, chat.type, departmentGroup?.leaderUserId, user]);
+
   // Auto-search effect
   useEffect(() => {
     const performSearch = async () => {
@@ -141,6 +156,34 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
       performSearch();
     }
   }, [debouncedSearchQuery, chat.id, showSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDepartmentGroup() {
+      if (chat.type !== 'department' || !chat.companyGroupId) {
+        setDepartmentGroup(null);
+        return;
+      }
+
+      try {
+        const group = await groupsAPI.getById(chat.companyGroupId);
+        if (!cancelled) {
+          setDepartmentGroup(group);
+        }
+      } catch (err) {
+        console.error('Error loading department group:', err);
+        if (!cancelled) {
+          setDepartmentGroup(null);
+        }
+      }
+    }
+
+    loadDepartmentGroup();
+    return () => {
+      cancelled = true;
+    };
+  }, [chat.companyGroupId, chat.type]);
 
   const clearSearch = () => {
     setShowSearch(false);
@@ -170,14 +213,22 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
   // Сбрасываем состояние при смене чата
   useEffect(() => {
     chatIdRef.current = chat.id;
-    // Очищаем сообщения сразу при смене чата
+    // Очищаем сообщения и участников сразу при смене чата
     setMessages([]);
+    setCurrentMembers(chat.members || []);
+    
+    // Закрываем модалки и сбрасываем состояние
+    setShowMembers(false);
+    setShowAddMember(false);
+    setEditingMessage(null);
+    setTypingUsers({});
+    
     // Сбрасываем поиск
     setSearchQuery('');
     setShowSearch(false);
     setSearchResults([]);
     setIsSearching(false);
-  }, [chat.id]);
+  }, [chat.id, chat.members]);
 
   // Синхронизируем messages из React Query с локальным состоянием
   useEffect(() => {
@@ -805,8 +856,11 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
         ) : (
           <>
             <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate flex items-center gap-2">
                 {displayName}
+                {chat.type === 'private' && partner?.role === 'Boss' && (
+                  <span className="text-[10px] bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded-full uppercase font-black tracking-widest text-center">Начальник</span>
+                )}
               </h3>
               {chat.type === 'private' && (
                 <p className={`text-xs ${isAnyPartnerTyping ? 'text-apple-blue font-medium animate-pulse' : 'text-gray-500'}`}>
@@ -838,7 +892,7 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
                 </button>
               )}
 
-              {chat.type === 'group' && (
+              {isMultiUserChat && (
                 <button
                   onClick={() => setShowMembers(true)}
                   className="p-2 text-gray-400 hover:text-apple-blue transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full"
@@ -895,13 +949,19 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
         ) : (
           <>
             <AnimatePresence initial={false}>
-              {sortedMessages.map((message) => {
+              {sortedMessages.map((message, i) => {
+                const prevMessage = i > 0 ? sortedMessages[i - 1] : null;
+                const nextMessage = i < sortedMessages.length - 1 ? sortedMessages[i + 1] : null;
+
+                const isFirstInGroup = !prevMessage || prevMessage.userId !== message.userId || prevMessage.type === 'system';
+                const isLastInGroup = !nextMessage || nextMessage.userId !== message.userId || nextMessage.type === 'system';
+
                 const isOwnMessage = message.userId === user?.id;
 
                 let senderName = undefined;
                 let senderAvatarUrl = undefined;
 
-                if (!isOwnMessage && (chat.type === 'group' || chat.type === 'channel')) {
+                if (!isOwnMessage && (chat.type === 'group' || chat.type === 'department' || chat.type === 'channel')) {
                   const member = currentMembers.find(m => String(m.id) === String(message.userId));
                   senderName = member?.firstName ? `${member.firstName} ${member.lastName || ''}`.trim() : member?.email;
 
@@ -924,6 +984,9 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
                     onShowVoters={setSelectedPollForVoters}
                     onToggleReaction={handleToggleReaction}
                     members={currentMembers}
+                    onUserClick={setSelectedProfileUserId}
+                    isFirstInGroup={isFirstInGroup}
+                    isLastInGroup={isLastInGroup}
                   />
                 );
               })}
@@ -1090,10 +1153,27 @@ const ChatWindowComponent = ({ chat, onBack }: ChatWindowProps) => {
             onClose={() => setShowMembers(false)}
             onRemove={async (userId) => {
               if (confirm('Вы уверены, что хотите удалить этого участника?')) {
-                await wsService.removeMember(chat.id, userId);
+                if (chat.type === 'department' && chat.companyGroupId) {
+                  await groupsAPI.removeMember(chat.companyGroupId, userId);
+                  setCurrentMembers(prev => prev.filter(member => Number(member.id) !== Number(userId)));
+                } else {
+                  await wsService.removeMember(chat.id, userId);
+                }
               }
             }}
             currentUserId={user?.id || 0}
+            canManage={canManageMembers}
+            leaderUserId={departmentGroup?.leaderUserId}
+            onUserClick={setSelectedProfileUserId}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedProfileUserId && (
+          <UserProfileModal
+            userId={selectedProfileUserId}
+            onClose={() => setSelectedProfileUserId(null)}
           />
         )}
       </AnimatePresence>
@@ -1289,13 +1369,19 @@ const MembersModal = ({
   members,
   onClose,
   onRemove,
-  currentUserId
+  currentUserId,
+  canManage,
+  leaderUserId,
+  onUserClick
 }: {
   chat: Chat;
   members: User[];
   onClose: () => void;
   onRemove: (userId: number) => void;
   currentUserId: number;
+  canManage: boolean;
+  leaderUserId?: number;
+  onUserClick: (userId: number) => void;
 }) => {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -1327,20 +1413,32 @@ const MembersModal = ({
         <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
           {members.map((u) => (
             <div key={u.id} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-apple-blue/10 flex items-center justify-center text-apple-blue font-bold uppercase shrink-0">
-                {u.firstName?.charAt(0) || u.email.charAt(0)}
-              </div>
+              <button
+                type="button"
+                onClick={() => onUserClick(u.id)}
+                className="w-10 h-10 rounded-full bg-apple-blue/10 flex items-center justify-center text-apple-blue font-bold uppercase shrink-0 overflow-hidden hover:ring-2 hover:ring-apple-blue/40 transition"
+                title="Открыть профиль"
+              >
+                {u.avatarUrl ? (
+                  <img src={getImageUrl(u.avatarUrl) || ''} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  u.firstName?.charAt(0) || u.email.charAt(0)
+                )}
+              </button>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-gray-900 dark:text-white truncate">
                   {u.firstName ? `${u.firstName} ${u.lastName || ''}` : u.email}
                   {chat.type === 'group' && Number(u.id) === Number(chat.creatorId) && (
                     <span className="ml-2 text-[10px] bg-apple-blue/10 text-apple-blue px-2 py-0.5 rounded-full uppercase font-black tracking-widest text-center">Создатель</span>
                   )}
+                  {(Number(u.id) === Number(leaderUserId) || u.role === 'Boss') && (
+                    <span className="ml-2 text-[10px] bg-orange-500/10 text-orange-600 px-2 py-0.5 rounded-full uppercase font-black tracking-widest text-center">Начальник</span>
+                  )}
                 </p>
                 <p className="text-xs text-gray-500 truncate">{u.email}</p>
               </div>
 
-              {chat.type === 'group' && Number(chat.creatorId) === Number(currentUserId) && Number(u.id) !== Number(currentUserId) && (
+              {canManage && Number(u.id) !== Number(currentUserId) && Number(u.id) !== Number(leaderUserId) && u.role !== 'Boss' && (
                 <button
                   onClick={() => onRemove(u.id)}
                   className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"
@@ -1743,7 +1841,10 @@ const MessageItem = memo(({
   onDelete,
   onShowVoters,
   onToggleReaction,
-  members
+  members,
+  onUserClick,
+  isFirstInGroup,
+  isLastInGroup
 }: {
   message: Message;
   isOwnMessage: boolean;
@@ -1756,6 +1857,9 @@ const MessageItem = memo(({
   onShowVoters?: (poll: any) => void;
   onToggleReaction?: (id: string | number, emoji: string) => void;
   members?: User[];
+  onUserClick?: (userId: number) => void;
+  isFirstInGroup?: boolean;
+  isLastInGroup?: boolean;
 }) => {
   const timeString = useMemo(() => {
     return new Date(message.createdAt).toLocaleTimeString('ru-RU', {
@@ -1822,21 +1926,27 @@ const MessageItem = memo(({
   return (
     <div
       id={`msg-${message.id}`}
-      className={`flex w-full mb-2 group/msg ${isOwnMessage ? 'justify-end' : 'justify-start items-end gap-2'}`}
+      className={`flex w-full ${isLastInGroup ? 'mb-3' : 'mb-0.5'} group/msg ${isOwnMessage ? 'justify-end' : 'justify-start items-end gap-2'}`}
     >
       {/* Аватарка только для чужих сообщений в групповом чате (если есть имя отправителя) */}
       {!isOwnMessage && senderName && (
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden self-end mb-1 shadow-sm">
-          {senderAvatarUrl ? (
-            <img
-              src={senderAvatarUrl}
-              alt={senderName}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-xs font-bold text-gray-500 dark:text-gray-300">
-              {senderName.charAt(0).toUpperCase()}
-            </div>
+        <div className={`flex-shrink-0 w-8 h-8 rounded-full ${isLastInGroup ? 'bg-gray-200 dark:bg-gray-600' : 'bg-transparent'} overflow-hidden self-end mb-1 shadow-sm`}>
+          {isLastInGroup && (
+            senderAvatarUrl ? (
+              <img
+                src={senderAvatarUrl}
+                alt={senderName}
+                className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={() => onUserClick?.(message.userId)}
+              />
+            ) : (
+              <div 
+                className="w-full h-full flex items-center justify-center text-xs font-bold text-gray-500 dark:text-gray-300 cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                onClick={() => onUserClick?.(message.userId)}
+              >
+                {senderName.charAt(0).toUpperCase()}
+              </div>
+            )
           )}
         </div>
       )}
@@ -1872,12 +1982,15 @@ const MessageItem = memo(({
         className={`relative w-fit min-w-[80px] max-w-[85%] lg:max-w-[70%] px-3 py-2 shadow-sm ${message.type === 'system'
           ? 'bg-transparent text-gray-500 text-center mx-auto text-xs'
           : isOwnMessage
-            ? 'bg-[#007AFF] dark:bg-[#2b5278] text-white rounded-2xl rounded-br-sm'
-            : 'bg-white dark:bg-[#182533] text-gray-800 dark:text-white rounded-2xl rounded-bl-sm border border-gray-100 dark:border-gray-800/50'
+            ? `bg-[#007AFF] dark:bg-[#2b5278] text-white ${isFirstInGroup ? 'rounded-t-2xl' : 'rounded-t-lg'} ${isLastInGroup ? 'rounded-br-sm' : 'rounded-br-2xl'} rounded-l-2xl`
+            : `bg-white dark:bg-[#182533] text-gray-800 dark:text-white ${isFirstInGroup ? 'rounded-t-2xl' : 'rounded-t-lg'} ${isLastInGroup ? 'rounded-bl-sm' : 'rounded-bl-2xl'} rounded-r-2xl border border-gray-100 dark:border-gray-800/50`
           }`}
       >
-        {message.type !== 'system' && !isOwnMessage && senderName && (
-          <p className={`text-xs font-bold mb-0.5 ${getUserColor(message.userId)}`}>
+        {message.type !== 'system' && !isOwnMessage && senderName && isFirstInGroup && (
+          <p 
+            className={`text-xs font-bold mb-0.5 cursor-pointer hover:underline ${getUserColor(message.userId)}`}
+            onClick={() => onUserClick?.(message.userId)}
+          >
             {senderName}
           </p>
         )}
